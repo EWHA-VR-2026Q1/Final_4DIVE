@@ -38,14 +38,44 @@ namespace HW09.Heejin
         {
             if (_grabFired) return;
             if (manager == null) return;
-            if (manager.currentStep != SceneManager3A.Step.WaitingForGrab) return;
+            // 인트로/완료 상태만 제외하고 어느 단계든 집기 허용
+            var step = manager.currentStep;
+            if (step == SceneManager3A.Step.None ||
+                step == SceneManager3A.Step.IntroPlaying ||
+                step == SceneManager3A.Step.Done) return;
 
+            // 양손 트리거 모두 지원
             bool pressed = OVRInput.Get(OVRInput.RawButton.LIndexTrigger)
-                        || OVRInput.Get(OVRInput.RawButton.LHandTrigger);
-            if (!pressed) return;
+                        || OVRInput.Get(OVRInput.RawButton.LHandTrigger)
+                        || OVRInput.Get(OVRInput.RawButton.RIndexTrigger)
+                        || OVRInput.Get(OVRInput.RawButton.RHandTrigger);
 
-            if (_leftAnchor != null && RayHitsThisObject(_leftAnchor))
-                FireGrab("왼손 트리거 + 레이 hit");
+            if (pressed)
+            {
+                // 레이 hit 시도
+                if (_leftAnchor != null && RayHitsThisObject(_leftAnchor))
+                { FireGrab("왼손 트리거 + 레이 hit"); return; }
+
+                // 백업: 손 근처에 있으면 트리거만으로도 집기
+                if (IsHandNearThis())
+                { FireGrab("손 근접 + 트리거"); return; }
+            }
+        }
+
+        bool IsHandNearThis()
+        {
+            float grabDist = 1.0f;
+            Vector3 pos = transform.position;
+            if (manager.ovrLeftHand  != null && Vector3.Distance(manager.ovrLeftHand.position,  pos) < grabDist) return true;
+            if (manager.ovrRightHand != null && Vector3.Distance(manager.ovrRightHand.position, pos) < grabDist) return true;
+
+            // OVR 참조 없으면 이름으로 탐색
+            foreach (string n in new[] { "LeftControllerAnchor", "LeftHandAnchor", "RightControllerAnchor", "RightHandAnchor" })
+            {
+                var go = GameObject.Find(n);
+                if (go != null && Vector3.Distance(go.transform.position, pos) < grabDist) return true;
+            }
+            return false;
         }
 
         bool RayHitsThisObject(Transform anchor)
@@ -94,7 +124,10 @@ namespace HW09.Heejin
         void FireGrab(string reason)
         {
             if (_grabFired) return;
-            if (manager.currentStep != SceneManager3A.Step.WaitingForGrab) return;
+            var step = manager.currentStep;
+            if (step == SceneManager3A.Step.None ||
+                step == SceneManager3A.Step.IntroPlaying ||
+                step == SceneManager3A.Step.Done) return;
             _grabFired = true;
             manager.OnCandleGrabbed();
         }

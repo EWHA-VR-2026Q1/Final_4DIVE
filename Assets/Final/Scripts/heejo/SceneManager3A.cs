@@ -108,6 +108,21 @@ namespace HW09.Heejin
                     OnCandleProximityEntered();
             }
 
+            // ── VR 트리거로 캔들 집기 (CandleGrabTrigger3A 미부착 대비 직접 감지) ──
+            if (!_candleGrabbed)
+            {
+                var s = currentStep;
+                if (s != Step.None && s != Step.IntroPlaying && s != Step.Done)
+                {
+                    bool triggerDown = OVRInput.GetDown(OVRInput.RawButton.LIndexTrigger)
+                                    || OVRInput.GetDown(OVRInput.RawButton.LHandTrigger)
+                                    || OVRInput.GetDown(OVRInput.RawButton.RIndexTrigger)
+                                    || OVRInput.GetDown(OVRInput.RawButton.RHandTrigger);
+                    if (triggerDown && IsTriggerNearCandle())
+                        OnCandleGrabbed();
+                }
+            }
+
             if (currentStep == Step.WaitingForGrab)
             {
                 if (Input.GetMouseButtonDown(0))
@@ -134,10 +149,12 @@ namespace HW09.Heejin
 
         public void OnCandleGrabbed()
         {
-            if (currentStep != Step.WaitingForGrab) return;
             if (_candleGrabbed) return;
+            // 인트로/완료 상태가 아니면 어느 단계에서든 집기 허용
+            if (currentStep == Step.None || currentStep == Step.IntroPlaying || currentStep == Step.Done) return;
             _candleGrabbed = true;
-            Log("캔들 집기 성공");
+            _candleNearTriggered = true; // 근접 단계도 완료로 표시
+            Log("캔들 집기 성공 (단계: " + currentStep + ")");
             RunFlow(GrabSuccessFlow());
         }
 
@@ -180,8 +197,8 @@ namespace HW09.Heejin
             yield return PlayAndWait(clip4, 2f);
             yield return new WaitForSeconds(2f);
             SetHighlight(door, true);
-            yield return PlayAndWait(clip5, 3f);
-            currentStep = Step.WaitingForDoor;
+            currentStep = Step.WaitingForDoor; // 문 빛나는 순간 바로 문 감지 시작
+            yield return PlayAndWait(clip5, 3f); // clip5는 배경음으로 계속 재생
         }
 
         IEnumerator LoadNextSceneFlow()
@@ -223,9 +240,34 @@ namespace HW09.Heejin
 
         Transform GetPlayerPosition()
         {
-            if (ovrCenterEye != null) return ovrCenterEye;
+            if (ovrCenterEye != null)  return ovrCenterEye;
             if (ovrPlayerRoot != null) return ovrPlayerRoot;
+
+            // Quest 3: Camera.main 대신 CenterEyeAnchor 직접 탐색
+            if (_cachedEye != null) return _cachedEye;
+            _cachedEye = FindEyeTransform();
+            return _cachedEye;
+        }
+
+        private Transform _cachedEye;
+
+        Transform FindEyeTransform()
+        {
+            // 1. OVRCameraRig의 centerEyeAnchor
+            var rig = FindObjectOfType<OVRCameraRig>();
+            if (rig != null) return rig.centerEyeAnchor;
+
+            // 2. 이름으로 탐색
+            var go = GameObject.Find("CenterEyeAnchor");
+            if (go != null) return go.transform;
+
+            // 3. Camera.main
             if (Camera.main != null) return Camera.main.transform;
+
+            // 4. 활성화된 카메라 중 첫 번째
+            foreach (var cam in FindObjectsOfType<Camera>())
+                if (cam.isActiveAndEnabled) return cam.transform;
+
             return null;
         }
 
@@ -241,11 +283,44 @@ namespace HW09.Heejin
             return false;
         }
 
+        // 트리거 누를 때 손이 캔들 근처인지 판정 (1.5m 이내 또는 플레이어 proximity)
+        bool IsTriggerNearCandle()
+        {
+            float dist = 1.5f;
+            foreach (Vector3 p in GetHandPositions())
+            {
+                if ((candle  != null && Vector3.Distance(p, candle.transform.position)  <= dist) ||
+                    (candle1 != null && Vector3.Distance(p, candle1.transform.position) <= dist))
+                    return true;
+            }
+            // 플레이어 시선으로도 확인 (손 위치 못 잡을 때 백업)
+            Transform eye = GetPlayerPosition();
+            if (eye != null)
+            {
+                if ((candle  != null && Vector3.Distance(eye.position, candle.transform.position)  <= candleProximityDistance) ||
+                    (candle1 != null && Vector3.Distance(eye.position, candle1.transform.position) <= candleProximityDistance))
+                    return true;
+            }
+            return false;
+        }
+
         List<Vector3> GetHandPositions()
         {
             var list = new List<Vector3>();
             if (ovrLeftHand  != null) list.Add(ovrLeftHand.position);
             if (ovrRightHand != null) list.Add(ovrRightHand.position);
+
+            // OVR 참조 없으면 이름으로 탐색
+            if (list.Count == 0)
+            {
+                foreach (string n in new[] {
+                    "LeftControllerAnchor", "LeftControllerInHandAnchor", "LeftHandAnchor",
+                    "RightControllerAnchor", "RightControllerInHandAnchor", "RightHandAnchor" })
+                {
+                    var go = GameObject.Find(n);
+                    if (go != null) list.Add(go.transform.position);
+                }
+            }
             return list;
         }
 
